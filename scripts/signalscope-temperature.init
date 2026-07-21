@@ -1,14 +1,15 @@
 #!/bin/sh
 
 NAME=signalscope-temperature
-DAEMON=/data/UserData/schwung/modules/tools/signalscope/signalscope-temperature.sh
+SCRIPT=/data/UserData/schwung/modules/tools/signalscope/signalscope-temperature.sh
+DAEMON=/bin/sh
 PIDFILE=/run/$NAME.pid
 
 case "$1" in
     start)
-        [ -x "$DAEMON" ] || exit 0
+        [ -r "$SCRIPT" ] || exit 0
         start-stop-daemon --start --quiet --background --make-pidfile \
-            --pidfile "$PIDFILE" --exec "$DAEMON"
+            --pidfile "$PIDFILE" --exec "$DAEMON" -- "$SCRIPT"
         ;;
     stop)
         start-stop-daemon --stop --quiet --retry TERM/5/KILL/2 \

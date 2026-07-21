@@ -35,7 +35,7 @@ https://github.com/OnjLouis/schwung-signalscope
 The dashboard and orchestra work immediately after import. CPU temperature is optional because Move restricts `vcgencmd` to root. To enable it, run this one-time command after importing:
 
 ```bash
-ssh root@move.local 'cp /data/UserData/schwung/modules/tools/signalscope/signalscope-temperature.init /etc/init.d/signalscope-temperature && chmod 0755 /data/UserData/schwung/modules/tools/signalscope/signalscope-temperature.sh /etc/init.d/signalscope-temperature && update-rc.d signalscope-temperature defaults && /etc/init.d/signalscope-temperature restart'
+ssh root@move.local 'cp /data/UserData/schwung/modules/tools/signalscope/signalscope-temperature.init /etc/init.d/signalscope-temperature && chmod 0755 /etc/init.d/signalscope-temperature && update-rc.d signalscope-temperature defaults && /etc/init.d/signalscope-temperature restart'
 ```
 
 Without that helper, SignalScope displays and announces temperature as unavailable rather than failing.
