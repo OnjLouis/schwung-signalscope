@@ -1,0 +1,38 @@
+{
+  "module_id": "signalscope",
+  "sections": [
+    {
+      "title": "Overview",
+      "content": [
+        "SignalScope is a Schwung tool for Ableton Move with CPU temperature, CPU use, memory, process, WiFi, network, storage, and uptime views.",
+        "It also includes an optional orchestra mode that turns nearby WiFi networks or active processes into pitched voices."
+      ]
+    },
+    {
+      "title": "Navigation",
+      "content": [
+        "Bottom pads select tabs.",
+        "Jog changes tab.",
+        "Back exits the tool.",
+        "Play performs a one-shot refresh for the current tab. On WiFi and ORCH it also rescans."
+      ]
+    },
+    {
+      "title": "Monitoring",
+      "content": [
+        "Rec toggles auto refresh on and off.",
+        "The PROC tab reports the top CPU consumers, including the main Move host process when it is dominant.",
+        "Refresh actions speak the new values for the current tab."
+      ]
+    },
+    {
+      "title": "Orchestra",
+      "content": [
+        "Step 1 selects WiFi source, Step 2 selects Process source, Step 3 refreshes and scans, Step 4 toggles orchestra on and off.",
+        "Master controls orchestra gain.",
+        "Knob 1 selects waveform, Knob 2 sets key, Knob 3 sets repeat rate, Knob 4 sets decay, Knobs 5 to 8 control pan for voices 1 to 4.",
+        "Track buttons select scale: Track 1 Major 7, Track 2 Minor 7, Track 3 Suspended 7, Track 4 Pentatonic."
+      ]
+    }
+  ]
+}

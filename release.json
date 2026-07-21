@@ -1,0 +1,9 @@
+{
+  "name": "SignalScope",
+  "id": "signalscope",
+  "version": "0.3.0",
+  "author": "Andre Louis",
+  "license": "MIT",
+  "asset_name": "signalscope-module.tar.gz",
+  "install_subdir": "tools"
+}

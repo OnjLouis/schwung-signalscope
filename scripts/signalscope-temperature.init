@@ -1,0 +1,36 @@
+#!/bin/sh
+
+NAME=signalscope-temperature
+DAEMON=/data/UserData/schwung/modules/tools/signalscope/signalscope-temperature.sh
+PIDFILE=/run/$NAME.pid
+
+case "$1" in
+    start)
+        [ -x "$DAEMON" ] || exit 0
+        start-stop-daemon --start --quiet --background --make-pidfile \
+            --pidfile "$PIDFILE" --exec "$DAEMON"
+        ;;
+    stop)
+        start-stop-daemon --stop --quiet --retry TERM/5/KILL/2 \
+            --pidfile "$PIDFILE" || true
+        rm -f "$PIDFILE" /run/signalscope-cpu-temp
+        ;;
+    restart|force-reload)
+        "$0" stop
+        "$0" start
+        ;;
+    status)
+        if [ -s "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
+            echo "$NAME is running"
+        else
+            echo "$NAME is not running"
+            exit 3
+        fi
+        ;;
+    *)
+        echo "Usage: $0 {start|stop|restart|status}"
+        exit 1
+        ;;
+esac
+
+exit 0
