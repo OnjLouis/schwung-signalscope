@@ -1,9 +1,4 @@
 {
-  "name": "SignalScope",
-  "id": "signalscope",
   "version": "0.3.0",
-  "author": "Andre Louis",
-  "license": "MIT",
-  "asset_name": "signalscope-module.tar.gz",
-  "install_subdir": "tools"
+  "download_url": "https://github.com/OnjLouis/schwung-signalscope/releases/download/v0.3.0/signalscope-module.tar.gz"
 }

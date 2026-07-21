@@ -24,7 +24,23 @@ The CPU temperature reader is intentionally separated from the module. A tiny ro
 - Knobs 5-8: pan for voices 1-4
 - Track buttons 1-4: Major 7, Minor 7, Suspended 7, or Pentatonic scale
 
-## Build
+## Install from Schwung Manager
+
+Download `signalscope-module.tar.gz` from the [latest release](https://github.com/OnjLouis/schwung-signalscope/releases/latest), then open `http://move.local:7700`, choose the custom-module installer, and upload the tarball. Alternatively, give the custom installer this repository URL and Schwung Manager will follow `release.json` to the current package:
+
+```text
+https://github.com/OnjLouis/schwung-signalscope
+```
+
+The dashboard and orchestra work immediately after import. CPU temperature is optional because Move restricts `vcgencmd` to root. To enable it, run this one-time command after importing:
+
+```bash
+ssh root@move.local 'cp /data/UserData/schwung/modules/tools/signalscope/signalscope-temperature.init /etc/init.d/signalscope-temperature && chmod 0755 /data/UserData/schwung/modules/tools/signalscope/signalscope-temperature.sh /etc/init.d/signalscope-temperature && update-rc.d signalscope-temperature defaults && /etc/init.d/signalscope-temperature restart'
+```
+
+Without that helper, SignalScope displays and announces temperature as unavailable rather than failing.
+
+## Build from Source
 
 The build script cross-compiles for Move's AArch64 Linux environment. Output is kept outside the repository.
 
@@ -32,9 +48,9 @@ The build script cross-compiles for Move's AArch64 Linux environment. Output is 
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\build.ps1 -OutputRoot C:\Temp\signalscope-build
 ```
 
-Set `ZIG_BIN` if Zig is not on `PATH` and is not installed at the optional maintainer path recognized by the script.
+Set `ZIG_BIN` if Zig is not on `PATH`.
 
-## Install
+## Install a Local Build
 
 The module is installed at `/data/UserData/schwung/modules/tools/signalscope`. Installation also requires root SSH access once to register the temperature service.
 
