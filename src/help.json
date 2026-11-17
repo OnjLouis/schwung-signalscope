@@ -22,13 +22,16 @@
       "content": [
         "Rec toggles auto refresh on and off.",
         "The PROC tab reports the top CPU consumers, including the main Move host process when it is dominant.",
-        "Refresh actions speak the new values for the current tab."
+        "Refresh actions speak the new values for the current tab.",
+        "On CPU, Step 5 speaks current and peak readings and Step 6 resets the peaks. Turn on auto refresh to sample continuously while the tool is open.",
+        "On DISK, Step 5 speaks the read rate and Step 6 speaks the write rate for user storage. This is block activity, not confirmation of a saved set."
       ]
     },
     {
       "title": "Orchestra",
       "content": [
         "Step 1 selects WiFi source, Step 2 selects Process source, Step 3 refreshes and scans, Step 4 toggles orchestra on and off.",
+        "Step 5 freezes or releases the current voice lineup. Sound settings still work, and switching source returns to live voices.",
         "Master controls orchestra gain.",
         "Knob 1 selects waveform, Knob 2 sets key, Knob 3 sets repeat rate, Knob 4 sets decay, Knobs 5 to 8 control pan for voices 1 to 4.",
         "Track buttons select scale: Track 1 Major 7, Track 2 Minor 7, Track 3 Suspended 7, Track 4 Pentatonic."

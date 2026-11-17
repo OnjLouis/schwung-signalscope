@@ -33,7 +33,6 @@ Copy-Item (Join-Path $repoRoot "src\module.json") (Join-Path $moduleDir "module.
 Copy-Item (Join-Path $repoRoot "src\help.json") (Join-Path $moduleDir "help.json") -Force
 Copy-Item (Join-Path $repoRoot "src\ui.js") (Join-Path $moduleDir "ui.js") -Force
 Copy-Item (Join-Path $buildDir "dsp.so") (Join-Path $moduleDir "dsp.so") -Force
-Copy-Item (Join-Path $repoRoot "scripts\signalscope-temperature.sh") (Join-Path $moduleDir "signalscope-temperature.sh") -Force
 Copy-Item (Join-Path $repoRoot "scripts\signalscope-temperature.init") (Join-Path $moduleDir "signalscope-temperature.init") -Force
 
 tar -czf $package -C $distDir signalscope

@@ -9,7 +9,7 @@ SignalScope is an unofficial interactive [Schwung](https://github.com/charlesves
 - WiFi link and network counters
 - nearby WiFi networks
 
-The CPU temperature reader is intentionally separated from the module. A tiny root-owned SysV service calls `vcgencmd` every five seconds and publishes only the result to `/run/signalscope-cpu-temp`; the Schwung module itself remains unprivileged.
+The CPU temperature reader is intentionally separated from the module. A tiny root-owned SysV service calls `vcgencmd` every five seconds and publishes only the result to `/run/signalscope-cpu-temp`; the Schwung module itself remains unprivileged. The service executes its own root-owned code, not files in the writable Schwung module directory.
 
 ## Controls
 
@@ -18,7 +18,10 @@ The CPU temperature reader is intentionally separated from the module. A tiny ro
 - `Play`: refresh the current tab; WiFi and orchestra views also rescan
 - `Rec`: toggle automatic refresh
 - `Back`: exit
+- CPU: Steps 5 and 6 speak and reset peaks sampled since opening the tool. Turn on automatic refresh to track peaks between manual refreshes.
+- DISK: Steps 5 and 6 speak the read and write rates on the user-storage partition. Disk samples only while the DISK view is open. Storage traffic can include delayed writeback and unrelated activity; a write is not proof that a set was saved.
 - Orchestra: Steps 1 and 2 choose WiFi or process data, Step 3 refreshes, and Step 4 toggles sound
+- Orchestra: Step 5 freezes the current voice lineup and strengths or returns to live data. Musical controls still work while frozen; switching the source unfreezes it.
 - `Master`: orchestra gain
 - Knobs 1-4: waveform, key, repeat rate, and decay
 - Knobs 5-8: pan for voices 1-4
@@ -32,13 +35,13 @@ Download `signalscope-module.tar.gz` from the [latest release](https://github.co
 https://github.com/OnjLouis/schwung-signalscope
 ```
 
-The dashboard and orchestra work immediately after import. CPU temperature is optional because Move restricts `vcgencmd` to root. To enable it, run this one-time command after importing:
+The dashboard and orchestra work immediately after import. CPU temperature is optional because Move restricts `vcgencmd` to root. To enable it on a fresh installation, use the matching `scripts/signalscope-temperature.init` from a trusted source checkout. Run the following from that checkout, not from a copy on the Move's shared drive:
 
 ```bash
-ssh root@move.local 'cp /data/UserData/schwung/modules/tools/signalscope/signalscope-temperature.init /etc/init.d/signalscope-temperature && chmod 0755 /etc/init.d/signalscope-temperature && update-rc.d signalscope-temperature defaults && /etc/init.d/signalscope-temperature restart'
+ssh root@move.local 'set -e; test ! -e /etc/init.d/signalscope-temperature; umask 022; cat > /etc/init.d/signalscope-temperature; chmod 0755 /etc/init.d/signalscope-temperature; update-rc.d signalscope-temperature defaults; /etc/init.d/signalscope-temperature start' < scripts/signalscope-temperature.init
 ```
 
-Without that helper, SignalScope displays and announces temperature as unavailable rather than failing.
+Repeat this after a firmware update if the update removes the service from the system partition. The module remains installed and temperature works again without restarting Move. To replace an existing service rather than install it for the first time, use the local build installer below. Without the helper, SignalScope displays and announces temperature as unavailable rather than failing.
 
 ## Build from Source
 

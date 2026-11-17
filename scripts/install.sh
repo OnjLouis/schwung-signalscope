@@ -8,8 +8,28 @@ SSH_TARGET="${SSH_TARGET:-ableton@move.local}"
 ROOT_SSH_TARGET="${ROOT_SSH_TARGET:-root@move.local}"
 
 scp -r "$BUILD_ROOT/dist/signalscope/"* "$SSH_TARGET:$MODULE_DIR/"
-ssh "$SSH_TARGET" "chmod 0755 '$MODULE_DIR/signalscope-temperature.sh'"
-
-scp "$SCRIPT_DIR/signalscope-temperature.init" "$ROOT_SSH_TARGET:/etc/init.d/signalscope-temperature"
-ssh "$ROOT_SSH_TARGET" \
-    "chmod 0755 /etc/init.d/signalscope-temperature && update-rc.d signalscope-temperature defaults && /etc/init.d/signalscope-temperature restart"
+ssh "$ROOT_SSH_TARGET" 'set -eu
+    service=/etc/init.d/signalscope-temperature
+    temporary=$(mktemp /etc/init.d/.signalscope-temperature.XXXXXX)
+    trap '\''rm -f "$temporary"'\'' EXIT
+    cat > "$temporary"
+    sh -n "$temporary"
+    chmod 0755 "$temporary"
+    if [ -e "$service" ]; then
+        pid=
+        if [ -r /run/signalscope-temperature.pid ]; then
+            IFS= read -r pid < /run/signalscope-temperature.pid || pid=
+        fi
+        case "$pid" in
+            ""|0|1|*[!0-9]*) pid= ;;
+        esac
+        "$service" stop
+        if [ -n "$pid" ] && [ -s "/proc/$pid/cmdline" ] &&
+            tr "\000" "\n" < "/proc/$pid/cmdline" | grep -Eq "^(/etc/init.d/signalscope-temperature|/data/UserData/schwung/modules/tools/signalscope/signalscope-temperature.sh)$"; then
+            echo "Existing temperature worker is still running; stop it before replacing the service." >&2
+            exit 1
+        fi
+    fi
+    mv -f "$temporary" "$service"
+    update-rc.d signalscope-temperature defaults
+    "$service" start' < "$SCRIPT_DIR/signalscope-temperature.init"

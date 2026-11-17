@@ -1,7 +1,9 @@
 #include "plugin_api_v1.h"
+#include "disk_activity.h"
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -10,10 +12,18 @@
 #include <sstream>
 #include <string>
 #include <vector>
+#include <sys/stat.h>
+#include <sys/sysmacros.h>
 
 namespace {
 
 const host_api_v1_t* g_host = nullptr;
+constexpr int kVoiceSlots = 4;
+constexpr unsigned kVoiceBits = 16;
+constexpr unsigned kVoiceActive = 0x8000;
+constexpr unsigned kVoiceStrength = kVoiceActive - 1;
+constexpr unsigned kVoiceStrengthScale = 0x4000;
+static_assert(ATOMIC_LLONG_LOCK_FREE == 2, "Voice snapshots require lock-free 64-bit atomics.");
 
 struct ProcEntry {
   int pid = 0;
@@ -132,6 +142,7 @@ public:
   SignalScope() {
     refresh_metrics(true);
     refresh_network_list();
+    publish_voices();
   }
 
   void set_param(const char* key, const char* val) {
@@ -146,6 +157,15 @@ public:
     if (strcmp(key, "scan_wifi") == 0) {
       refresh_metrics(false);
       refresh_network_list();
+      publish_voices();
+      return;
+    }
+    if (strcmp(key, "disk_activity_refresh") == 0) {
+      read_disk_activity();
+      return;
+    }
+    if (strcmp(key, "disk_activity_reset") == 0) {
+      disk_activity_.clear();
       return;
     }
     if (strcmp(key, "auto_refresh") == 0) {
@@ -181,7 +201,17 @@ public:
       return;
     }
     if (strcmp(key, "sonify_source") == 0) {
-      sonify_source_ = std::max(0, std::min(1, atoi(val)));
+      const int source = std::max(0, std::min(1, atoi(val)));
+      if (source != sonify_source_) {
+        sonify_frozen_ = false;
+        sonify_source_ = source;
+        publish_voices();
+      }
+      return;
+    }
+    if (strcmp(key, "sonify_frozen") == 0) {
+      sonify_frozen_ = atoi(val) != 0 && voice_snapshot_.load(std::memory_order_relaxed) != 0;
+      publish_voices();
       return;
     }
     if (strcmp(key, "sonify_pan_1") == 0) { voice_pan_[0] = clamp_pan(val); return; }
@@ -191,6 +221,8 @@ public:
   }
 
   int get_param(const char* key, char* buf, int buf_len) {
+    if (strcmp(key, "disk_activity_json") == 0)
+      return write_string(buf, buf_len, disk_activity_json());
     maybe_auto_refresh();
     if (strcmp(key, "auto_refresh") == 0)
       return snprintf(buf, buf_len, "%d", auto_refresh_ ? 1 : 0);
@@ -210,6 +242,8 @@ public:
       return snprintf(buf, buf_len, "%d", sonify_scale_);
     if (strcmp(key, "sonify_source") == 0)
       return snprintf(buf, buf_len, "%d", sonify_source_);
+    if (strcmp(key, "sonify_frozen") == 0)
+      return snprintf(buf, buf_len, "%d", sonify_frozen_ ? 1 : 0);
     if (strcmp(key, "sonify_pan_1") == 0)
       return snprintf(buf, buf_len, "%.3f", voice_pan_[0]);
     if (strcmp(key, "sonify_pan_2") == 0)
@@ -234,10 +268,12 @@ public:
   void render_block(int16_t* out, int frames) {
     if (!out || frames <= 0)
       return;
-    const auto slotted = get_slotted_voices();
+    const auto snapshot = voice_snapshot_.load(std::memory_order_relaxed);
+    std::array<unsigned, kVoiceSlots> slots{};
     int voices = 0;
-    for (int slot = 0; slot < 4; ++slot) {
-      if (slotted[slot].active)
+    for (int slot = 0; slot < kVoiceSlots; ++slot) {
+      slots[slot] = static_cast<unsigned>((snapshot >> (slot * kVoiceBits)) & 0xffff);
+      if (slots[slot] & kVoiceActive)
         ++voices;
     }
     if (!sonify_enable_ || voices == 0 || sonify_gain_ <= 0.0001f) {
@@ -250,8 +286,8 @@ public:
     for (int i = 0; i < frames; ++i) {
       if (++samples_until_trigger_ >= samples_per_trigger) {
         samples_until_trigger_ = 0.0f;
-        for (int slot = 0; slot < 4; ++slot) {
-          if (!slotted[slot].active)
+        for (int slot = 0; slot < kVoiceSlots; ++slot) {
+          if (!(slots[slot] & kVoiceActive))
             continue;
           voice_states_[slot].env = 1.0f;
           voice_states_[slot].phase = 0.0f;
@@ -259,11 +295,10 @@ public:
       }
       float mix_l = 0.0f;
       float mix_r = 0.0f;
-      for (int slot = 0; slot < 4; ++slot) {
-        if (!slotted[slot].active)
+      for (int slot = 0; slot < kVoiceSlots; ++slot) {
+        if (!(slots[slot] & kVoiceActive))
           continue;
-        const SonifyVoice& voice = slotted[slot].voice;
-        const float norm = std::max(0.0f, std::min(1.0f, voice.strength));
+        const float norm = static_cast<float>(slots[slot] & kVoiceStrength) / kVoiceStrengthScale;
         const int octave = static_cast<int>(std::round(norm * 2.0f));
         const auto& tones = current_scale_tones();
         const int tone = tones[slot % tones.size()];
@@ -324,7 +359,30 @@ private:
       read_df();
       last_disk_refresh_ = std::chrono::steady_clock::now();
     }
+    publish_voices();
     last_refresh_ = std::chrono::steady_clock::now();
+  }
+
+  void read_disk_activity() {
+    struct stat data_volume{};
+    std::string text;
+    DiskCounters counters;
+    if (stat("/data", &data_volume) != 0 || !read_file("/proc/diskstats", text) ||
+        !find_disk_counters(text, major(data_volume.st_dev), minor(data_volume.st_dev), counters)) {
+      disk_activity_.clear();
+      return;
+    }
+    const double now = std::chrono::duration<double>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+    disk_activity_.update(counters, now, data_volume.st_dev);
+  }
+
+  std::string disk_activity_json() const {
+    std::ostringstream os;
+    os << "{\"available\":" << (disk_activity_.available ? "true" : "false")
+       << ",\"read_bps\":" << disk_activity_.read_bps
+       << ",\"write_bps\":" << disk_activity_.write_bps << "}";
+    return os.str();
   }
 
   bool top_cpu_refresh_due() const {
@@ -747,6 +805,21 @@ private:
     return sonify_source_ == 1 ? proc_slot_labels_ : wifi_slot_labels_;
   }
 
+  void publish_voices() {
+    if (sonify_frozen_) return;
+    const auto slots = get_slotted_voices();
+    unsigned long long snapshot = 0;
+    voice_count_ = 0;
+    for (int slot = 0; slot < kVoiceSlots; ++slot) {
+      if (!slots[slot].active) continue;
+      ++voice_count_;
+      const auto strength = static_cast<unsigned>(std::lround(slots[slot].voice.strength * kVoiceStrengthScale));
+      snapshot |= static_cast<unsigned long long>(kVoiceActive | strength) << (slot * kVoiceBits);
+    }
+    // Render reads one coherent snapshot; strings and collections stay off that path.
+    voice_snapshot_.store(snapshot, std::memory_order_relaxed);
+  }
+
   std::string procs_json(const std::vector<ProcEntry>& items, bool mem_rss) const {
     std::ostringstream os;
     os << "[";
@@ -813,14 +886,6 @@ private:
   }
 
   std::string sonify_status_json() const {
-    size_t voice_count = 0;
-    if (sonify_source_ == 1) {
-      voice_count = std::min<size_t>(4, metrics_.top_cpu.size());
-    } else {
-      voice_count = !metrics_.wifi_scan.empty()
-        ? std::min<size_t>(4, metrics_.wifi_scan.size())
-        : ((metrics_.wifi_ssid != "offline" && !metrics_.wifi_ssid.empty()) ? 1 : 0);
-    }
     std::ostringstream os;
     os << "{"
        << "\"enabled\":" << (sonify_enable_ ? 1 : 0)
@@ -832,12 +897,17 @@ private:
        << ",\"scale\":" << sonify_scale_
        << ",\"source\":" << sonify_source_
         << ",\"auto_refresh\":" << (auto_refresh_ ? 1 : 0)
-        << ",\"voices\":" << voice_count
+        << ",\"frozen\":" << (sonify_frozen_ ? "true" : "false")
+        << ",\"voices\":" << voice_count_
         << "}";
     return os.str();
   }
 
   Metrics metrics_;
+  DiskActivity disk_activity_;
+  std::atomic<unsigned long long> voice_snapshot_{0};
+  bool sonify_frozen_ = false;
+  int voice_count_ = 0;
   bool auto_refresh_ = false;
   bool sonify_enable_ = false;
   float sonify_gain_ = 0.90f;

@@ -2,7 +2,7 @@ import {
     MidiNoteOn,
     MoveMainKnob, MoveMainButton, MoveBack, MovePlay, MoveRec, MoveMaster,
     MoveKnob1, MoveKnob2, MoveKnob3, MoveKnob4, MoveKnob5, MoveKnob6, MoveKnob7, MoveKnob8, MovePads,
-    MoveStep1, MoveStep2, MoveStep3, MoveStep4,
+    MoveStep1, MoveStep2, MoveStep3, MoveStep4, MoveStep5, MoveStep6,
     MoveRow1, MoveRow2, MoveRow3, MoveRow4,
     White, Black, BrightGreen, Cyan, OrangeRed, VividYellow,
     BrightRed, SkyBlue, LightGrey, DarkGrey, WhiteLedBright, WhiteLedDim
@@ -38,6 +38,10 @@ let statusMessage = '';
 let statusTicks = 0;
 let lastPadPress = { note: -1, time: 0 };
 let lastAutoRefreshAt = 0;
+let lastDiskSampleAt = -Infinity;
+let peakCpu = null;
+let peakTemp = null;
+const SAMPLE_INTERVAL_MS = 1000;
 let knobAccum = { k1: 0, k2: 0, k3: 0, k4: 0, k5: 0, k6: 0, k7: 0, k8: 0, master: 0 };
 
 const KNOB_TOUCH_NAMES = [
@@ -78,12 +82,70 @@ function safeParse(key, fallback) {
 function refreshAll(scanWifi) {
     host_module_set_param('refresh', '1');
     if (scanWifi) host_module_set_param('scan_wifi', '1');
-    overview = safeParse('overview_json', {});
+    readOverview({});
     topCpu = safeParse('top_cpu_json', []);
     topMem = safeParse('top_mem_json', []);
     wifiScan = safeParse('wifi_scan_json', []);
     sonify = safeParse('sonify_status', sonify);
     needsRedraw = true;
+}
+
+function readOverview(fallback) {
+    overview = safeParse('overview_json', fallback);
+    const { cpu_pct, cpu_temp_available, cpu_temp_c } = overview;
+    if (Number.isFinite(cpu_pct)) peakCpu = Math.max(peakCpu ?? cpu_pct, cpu_pct);
+    if (cpu_temp_available && Number.isFinite(cpu_temp_c)) {
+        peakTemp = Math.max(peakTemp ?? cpu_temp_c, cpu_temp_c);
+    }
+}
+
+function announcePeaks(reset) {
+    host_module_set_param('refresh_light', '1');
+    readOverview({});
+    if (reset) {
+        peakCpu = Number.isFinite(overview.cpu_pct) ? overview.cpu_pct : null;
+        peakTemp = overview.cpu_temp_available && Number.isFinite(overview.cpu_temp_c)
+            ? overview.cpu_temp_c : null;
+        setStatus('CPU and temperature peaks reset', true);
+        return;
+    }
+    const cpu = Number.isFinite(overview.cpu_pct) ? `CPU ${overview.cpu_pct.toFixed(1)} percent` : 'CPU unavailable';
+    const currentTemp = temperatureAnnouncement();
+    const maxCpu = peakCpu === null ? '' : `, peak ${peakCpu.toFixed(1)} percent`;
+    const maxTemp = peakTemp === null ? '' : `, peak ${peakTemp.toFixed(1)} degrees Celsius`;
+    setStatus('CPU and temp peaks', false);
+    announce(`${cpu}${maxCpu}. ${currentTemp}${maxTemp}.`);
+}
+
+function sampleDisk(now) {
+    if (now - lastDiskSampleAt < SAMPLE_INTERVAL_MS) return;
+    host_module_set_param('disk_activity_refresh', '1');
+    lastDiskSampleAt = now;
+}
+
+function announceDiskActivity(writing) {
+    sampleDisk(Date.now());
+    const disk = safeParse('disk_activity_json', {});
+    const rate = writing ? disk.write_bps : disk.read_bps;
+    if (!disk.available || !Number.isFinite(rate)) {
+        setStatus('Disk activity unavailable', true);
+        return;
+    }
+    const amount = rate >= 1000000 ? `${(rate / 1000000).toFixed(1)} megabytes`
+        : rate >= 1000 ? `${(rate / 1000).toFixed(1)} kilobytes`
+        : `${Math.round(rate)} bytes`;
+    setStatus(writing ? 'Disk writes' : 'Disk reads', false);
+    announce(`User storage ${writing ? 'write' : 'read'} rate, ${amount} per second`);
+}
+
+function toggleFreeze() {
+    const wasFrozen = host_module_get_param('sonify_frozen') === '1';
+    host_module_set_param('sonify_frozen', wasFrozen ? '0' : '1');
+    sonify = safeParse('sonify_status', sonify);
+    updateLeds();
+    setStatus(wasFrozen ? 'Orchestra live' : sonify.frozen
+        ? `Orchestra frozen, ${sonify.voices} ${sonify.voices === 1 ? 'voice' : 'voices'}`
+        : 'No voices to freeze', true);
 }
 
 function announceRefreshResult(prefix) {
@@ -118,7 +180,7 @@ function tabAnnouncement() {
         case 'up':
             return `Uptime ${formatUptime(overview.uptime_seconds || 0)}`;
         case 'orch':
-            return `Orchestra ${sonify.enabled ? 'on' : 'off'}, ${sonify.voices || wifiScan.length} voices, ${WAVE_NAMES[parseInt(host_module_get_param('sonify_waveform') || '0', 10)] || 'Sine'}, ${SCALE_NAMES[parseInt(host_module_get_param('sonify_scale') || '0', 10)] || 'Maj7'}`;
+            return `Orchestra ${sonify.enabled ? 'on' : 'off'}, ${sonify.frozen ? 'frozen' : 'live'}, ${sonify.voices || 0} voices, ${WAVE_NAMES[parseInt(host_module_get_param('sonify_waveform') || '0', 10)] || 'Sine'}, ${SCALE_NAMES[parseInt(host_module_get_param('sonify_scale') || '0', 10)] || 'Maj7'}`;
     }
     return TABS[selectedTab].label;
 }
@@ -139,6 +201,10 @@ function updateLeds() {
     setButtonLED(MoveRec, host_module_get_param('auto_refresh') === '1' ? WhiteLedBright : WhiteLedDim);
     setButtonLED(MoveMainButton, WhiteLedDim);
     setButtonLED(MoveBack, WhiteLedBright);
+    const tab = TABS[selectedTab].id;
+    setLED(MoveStep5, tab === 'orch' && sonify.frozen ? BrightRed
+        : tab === 'cpu' || tab === 'disk' || tab === 'orch' ? White : Black);
+    setLED(MoveStep6, tab === 'cpu' || tab === 'disk' ? White : Black);
     const scale = parseInt(host_module_get_param('sonify_scale') || '0', 10);
     setButtonLED(MoveRow1, scale === 0 ? WhiteLedBright : WhiteLedDim);
     setButtonLED(MoveRow2, scale === 1 ? WhiteLedBright : WhiteLedDim);
@@ -247,7 +313,7 @@ function drawDisk() {
     printLine(36, 'Free', `${(overview.data_free_gb || 0).toFixed(1)}G`);
     printLine(46, 'Root', `${(overview.root_used_pct || 0).toFixed(1)}%`);
     printLine(56, 'RootFree', `${(overview.root_free_gb || 0).toFixed(2)}G`);
-    drawFooter('Play refresh', 'Jog tabs');
+    drawFooter('5 read 6 write', 'Jog tabs');
 }
 
 function drawUp() {
@@ -259,12 +325,12 @@ function drawUp() {
 }
 
 function drawOrch() {
-    printLine(16, 'Orch', sonify.enabled ? 'On' : 'Off');
+    printLine(16, 'Orch', (sonify.enabled ? 'On' : 'Off') + (sonify.frozen ? ' Frozen' : ''));
     printLine(24, 'Src', SOURCE_NAMES[parseInt(host_module_get_param('sonify_source') || '0', 10)] || 'WiFi');
     printLine(32, 'Wave', WAVE_NAMES[parseInt(host_module_get_param('sonify_waveform') || '0', 10)] || 'Sine');
     printLine(40, 'Scale', SCALE_NAMES[parseInt(host_module_get_param('sonify_scale') || '0', 10)] || 'Maj7');
     printLine(48, 'Dec', formatDecay(host_module_get_param('sonify_decay') || '900'));
-    printLine(56, 'V/G', `${sonify.voices || wifiScan.length}/${Math.round(parseFloat(host_module_get_param('sonify_gain') || '0.90') * 100)}%`);
+    printLine(56, 'V/G', `${sonify.voices || 0}/${Math.round(parseFloat(host_module_get_param('sonify_gain') || '0.90') * 100)}%`);
     drawFooter(host_module_get_param('auto_refresh') === '1' ? 'Rec auto on' : 'Rec auto off', 'Play once');
 }
 
@@ -289,6 +355,11 @@ function draw() {
 
 function changeTab(idx) {
     selectedTab = idx;
+    if (TABS[selectedTab].id === 'disk') {
+        host_module_set_param('disk_activity_reset', '1');
+        lastDiskSampleAt = -Infinity;
+        sampleDisk(Date.now());
+    }
     updateLeds();
     setStatus(TABS[selectedTab].label, false);
     announce(tabAnnouncement());
@@ -331,6 +402,14 @@ function onMidiMessageInternal(msg) {
     const status = msg[0] & 0xF0;
     const cc = msg[1];
     const value = msg[2];
+    const tab = TABS[selectedTab].id;
+
+    if (status === MidiNoteOn && value > 0 && (cc === MoveStep5 || cc === MoveStep6)) {
+        if (tab === 'cpu') announcePeaks(cc === MoveStep6);
+        else if (tab === 'disk') announceDiskActivity(cc === MoveStep6);
+        else if (tab === 'orch' && cc === MoveStep5) toggleFreeze();
+        return;
+    }
 
     if (status === MidiNoteOn && value > 0 && cc >= 0 && cc <= 7) {
         if (cc <= 7) {
@@ -344,12 +423,18 @@ function onMidiMessageInternal(msg) {
 
     if (status === MidiNoteOn && value > 0 && TABS[selectedTab].id === 'orch' && cc >= MoveStep1 && cc <= MoveStep4) {
         if (cc === MoveStep1) {
+            const wasFrozen = sonify.frozen;
             host_module_set_param('sonify_source', '0');
-            setStatus('Source WiFi', true);
+            sonify = safeParse('sonify_status', sonify);
+            updateLeds();
+            setStatus(wasFrozen && !sonify.frozen ? 'Source WiFi, orchestra live' : 'Source WiFi', true);
             announceParameter('Source', 'WiFi');
         } else if (cc === MoveStep2) {
+            const wasFrozen = sonify.frozen;
             host_module_set_param('sonify_source', '1');
-            setStatus('Source Process', true);
+            sonify = safeParse('sonify_status', sonify);
+            updateLeds();
+            setStatus(wasFrozen && !sonify.frozen ? 'Source Process, orchestra live' : 'Source Process', true);
             announceParameter('Source', 'Process');
         } else if (cc === MoveStep3) {
             refreshAll(true);
@@ -520,6 +605,7 @@ function onMidiMessageInternal(msg) {
 }
 
 function onMidiMessageExternal(msg) {
+    if (msg && (msg[0] & 0xF0) === MidiNoteOn && (msg[1] === MoveStep5 || msg[1] === MoveStep6)) return;
     onMidiMessageInternal(msg);
 }
 
@@ -548,9 +634,10 @@ function knobTouchValue(index) {
 function tick() {
     tickCounter++;
     const now = Date.now();
-    if (host_module_get_param('auto_refresh') === '1' && now - lastAutoRefreshAt >= 1000) {
+    if (TABS[selectedTab].id === 'disk') sampleDisk(now);
+    if (host_module_get_param('auto_refresh') === '1' && now - lastAutoRefreshAt >= SAMPLE_INTERVAL_MS) {
         host_module_set_param('refresh_light', '1');
-        overview = safeParse('overview_json', overview);
+        readOverview(overview);
         topCpu = safeParse('top_cpu_json', topCpu);
         topMem = safeParse('top_mem_json', topMem);
         sonify = safeParse('sonify_status', sonify);

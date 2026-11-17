@@ -1,32 +1,86 @@
 #!/bin/sh
 
-NAME=signalscope-temperature
-SCRIPT=/data/UserData/schwung/modules/tools/signalscope/signalscope-temperature.sh
-DAEMON=/bin/sh
-PIDFILE=/run/$NAME.pid
+set -eu
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH LC_ALL=C
+umask 022
 
-case "$1" in
+SERVICE=/etc/init.d/signalscope-temperature
+PIDFILE=/run/signalscope-temperature.pid
+OUTPUT=/run/signalscope-cpu-temp
+
+running() {
+    [ -r "$PIDFILE" ] || return 1
+    IFS= read -r pid < "$PIDFILE" || return 1
+    case "$pid" in ''|0|1|*[!0-9]*) return 1 ;; esac
+    [ -r "/proc/$pid/cmdline" ] || return 1
+    [ "$(tr '\000' '\n' < "/proc/$pid/cmdline" 2>/dev/null)" = "/bin/sh
+$SERVICE
+worker" ]
+}
+
+worker() {
+    # Root executes only this installed copy, never the module on the SD card.
+    temporary="$OUTPUT.tmp.$$"
+    trap 'rm -f "$temporary" "$OUTPUT"' EXIT
+    trap 'exit 0' INT TERM
+    while :; do
+        if value=$(/usr/bin/vcgencmd measure_temp 2>/dev/null); then
+            case "$value" in
+                temp=*C)
+                    printf '%s\n' "$value" > "$temporary"
+                    mv -f "$temporary" "$OUTPUT"
+                    ;;
+                *) rm -f "$OUTPUT" ;;
+            esac
+        else
+            rm -f "$OUTPUT"
+        fi
+        sleep 5
+    done
+}
+
+if [ "$(id -u)" != 0 ]; then
+    echo 'SignalScope temperature service requires root.'
+    exit 1
+fi
+
+case "${1:-}" in
     start)
-        [ -r "$SCRIPT" ] || exit 0
-        start-stop-daemon --start --quiet --background --make-pidfile \
-            --pidfile "$PIDFILE" --exec "$DAEMON" -- "$SCRIPT"
+        running && exit 0
+        rm -f "$OUTPUT"
+        /bin/sh "$SERVICE" worker </dev/null >/dev/null 2>&1 &
+        printf '%s\n' "$!" > "$PIDFILE"
         ;;
     stop)
-        start-stop-daemon --stop --quiet --retry TERM/5/KILL/2 \
-            --pidfile "$PIDFILE" || true
-        rm -f "$PIDFILE" /run/signalscope-cpu-temp
+        if running; then
+            kill -TERM "$pid" 2>/dev/null || true
+            count=0
+            while running; do
+                if [ "$count" -ge 8 ]; then
+                    echo 'SignalScope temperature worker did not stop.'
+                    exit 1
+                fi
+                sleep 1
+                count=$((count + 1))
+            done
+        fi
+        rm -f "$PIDFILE" "$OUTPUT"
         ;;
     restart|force-reload)
-        "$0" stop
-        "$0" start
+        "$SERVICE" stop
+        "$SERVICE" start
         ;;
     status)
-        if [ -s "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
-            echo "$NAME is running"
+        if running; then
+            echo 'SignalScope temperature service is running.'
         else
-            echo "$NAME is not running"
+            echo 'SignalScope temperature service is not running.'
             exit 3
         fi
+        ;;
+    worker)
+        worker
         ;;
     *)
         echo "Usage: $0 {start|stop|restart|status}"

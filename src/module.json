@@ -1,7 +1,7 @@
 {
   "id": "signalscope",
   "name": "SignalScope",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Performance and temperature dashboard with WiFi orchestra for Ableton Move",
   "author": "Andre Louis",
   "license": "MIT",
